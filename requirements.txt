@@ -1,0 +1,10 @@
+modal
+fastapi[standard]
+pydantic
+pymupdf
+pdf2image
+pytesseract
+openai
+anthropic
+httpx
+tenacity
