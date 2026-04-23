@@ -5,15 +5,21 @@ from .prompts import SYSTEM_PROMPT, MAP_PROMPT, REDUCE_PROMPT
 from openai import OpenAI
 from anthropic import Anthropic
 
-def generate_summary_and_insights(chunks: list, filename: str, params: dict, extraction: dict) -> dict:
+def generate_summary_and_insights(chunks: list, filename: str, params: dict, extraction: dict, progress_cb=None) -> dict:
     provider = settings.LLM_PROVIDER.lower()
     
     # Map phase: summarize each chunk
     chunk_summaries = []
+    total = len(chunks)
     for i, chunk in enumerate(chunks):
-        prompt = MAP_PROMPT.format(text=chunk, chunk_index=i+1, total_chunks=len(chunks))
+        if progress_cb:
+            progress_cb(f"summarizing: {i+1}/{total}")
+        prompt = MAP_PROMPT.format(text=chunk, chunk_index=i+1, total_chunks=total)
         res = call_llm(prompt, provider, is_json=True)
         chunk_summaries.append(res)
+        
+    if progress_cb:
+        progress_cb("summarizing: финальная сборка")
         
     # Reduce phase: combine insights and write final markdown
     combined_summaries = json.dumps(chunk_summaries, ensure_ascii=False)
@@ -54,7 +60,7 @@ def call_llm(prompt: str, provider: str, is_json: bool = False) -> dict:
         system_msg += "\n\nYou MUST return valid JSON. Do NOT wrap it in markdown codeblocks like ```json."
         
     if provider == "openai":
-        client = OpenAI(api_key=settings.LLM_API_KEY)
+        client = OpenAI(api_key=settings.LLM_API_KEY, timeout=60.0)
         response = client.chat.completions.create(
             model=settings.LLM_MODEL or "gpt-4o",
             messages=[
@@ -69,6 +75,7 @@ def call_llm(prompt: str, provider: str, is_json: bool = False) -> dict:
         client = OpenAI(
             base_url="https://openrouter.ai/api/v1",
             api_key=settings.LLM_API_KEY,
+            timeout=60.0
         )
         response = client.chat.completions.create(
             model=settings.LLM_MODEL or "google/gemini-2.0-flash-lite-preview-02-05:free",
@@ -83,6 +90,7 @@ def call_llm(prompt: str, provider: str, is_json: bool = False) -> dict:
         client = OpenAI(
             base_url="https://integrate.api.nvidia.com/v1",
             api_key=settings.LLM_API_KEY,
+            timeout=60.0
         )
         response = client.chat.completions.create(
             model=settings.LLM_MODEL or "meta/llama-3.1-70b-instruct",
@@ -94,7 +102,7 @@ def call_llm(prompt: str, provider: str, is_json: bool = False) -> dict:
         content = response.choices[0].message.content
 
     elif provider == "anthropic":
-        client = Anthropic(api_key=settings.LLM_API_KEY)
+        client = Anthropic(api_key=settings.LLM_API_KEY, timeout=60.0)
         prompt_with_formatting = f"{prompt}\n\nReturn ONLY valid JSON." if is_json else prompt
         response = client.messages.create(
             model=settings.LLM_MODEL or "claude-3-5-sonnet-20241022",

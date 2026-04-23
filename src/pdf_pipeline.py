@@ -3,10 +3,11 @@ from .extract import extract_text_from_pdf
 from .chunking import chunk_text
 from .summarize import generate_summary_and_insights
 from .storage import JobStorage
+from .config import settings
 
 def process_pdf(job_id: str, filename: str, params: dict, volume=None):
     """Orchestrates the PDF processing and insight extraction workflow."""
-    storage = JobStorage("/data", volume=volume)
+    storage = JobStorage(settings.JOBS_DIR, volume=volume)
     storage.update_status(job_id, "extracting")
     
     try:
@@ -24,7 +25,12 @@ def process_pdf(job_id: str, filename: str, params: dict, volume=None):
         storage.update_status(job_id, "summarizing")
         
         # 3. LLM Insights & Synthesis Phase
-        final_result = generate_summary_and_insights(chunks, filename, params, extraction_result)
+        def update_progress(msg):
+            storage.update_status(job_id, msg)
+            
+        final_result = generate_summary_and_insights(
+            chunks, filename, params, extraction_result, progress_cb=update_progress
+        )
         
         # 4. Save Final Artifacts
         storage.save_json(job_id, final_result)

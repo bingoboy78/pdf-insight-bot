@@ -9,9 +9,17 @@ from .storage import JobStorage
 
 # Define the image and other resources
 image = (
-    modal.Image.debian_slim()
-    .apt_install("tesseract-ocr", "tesseract-ocr-rus", "tesseract-ocr-eng", "poppler-utils")
-    .pip_install_from_requirements("requirements.txt")
+    modal.Image.debian_slim(python_version="3.11")
+    .apt_install("tesseract-ocr", "tesseract-ocr-rus", "libtesseract-dev", "poppler-utils")
+    .pip_install(
+        "fastapi[standard]",
+        "pymupdf",
+        "pytesseract",
+        "pdf2image",
+        "openai",
+        "anthropic",
+        "tenacity"
+    )
 )
 
 app = modal.App("pdf-insight-bot")
@@ -194,16 +202,23 @@ def api():
                                     <a href="/result/${jobId}" target="_blank">⚙️ Посмотреть данные (JSON)</a>
                                 `;
                                 submitBtn.disabled = false;
-                            } else if (data.status === 'error') {
-                                statusContent.innerHTML = '<p class="error">❌ Ошибка: ' + data.error + '</p>';
+                            } else if (data.status === 'error' || data.status === 'failed') {
+                                statusContent.innerHTML = '<p class="error">❌ Ошибка: ' + (data.error || 'Неизвестная ошибка') + '</p>';
                                 submitBtn.disabled = false;
                             } else {
                                 const statusMap = {
-                                    'processing': 'Извлечение текста...',
+                                    'processing': 'Инициализация...',
+                                    'extracting': 'Извлечение текста...',
+                                    'chunking': 'Разбиение на части...',
                                     'summarizing': 'Нейросеть пишет конспект...',
                                     'pending': 'В очереди...'
                                 };
-                                statusContent.innerHTML = '<p class="loading">⏳ ' + (statusMap[data.status] || data.status) + '</p>';
+                                // Match starting string for progress like 'summarizing: 5/10'
+                                let displayStatus = statusMap[data.status] || data.status;
+                                if (data.status.startsWith('summarizing:')) {
+                                    displayStatus = 'Анализ частей: ' + data.status.split(':')[1];
+                                }
+                                statusContent.innerHTML = '<p class="loading">⏳ ' + displayStatus + '</p>';
                                 setTimeout(poll, 4000);
                             }
                         } catch (e) {
