@@ -30,7 +30,7 @@ volume = modal.Volume.from_name(settings.VOLUME_NAME, create_if_missing=True)
     secrets=[modal.Secret.from_name("pdf-insight-secrets")],
     volumes={settings.VOLUME_PATH: volume},
     timeout=600, # 10 mins per chunk
-    max_containers=5  # Limit parallel calls to avoid API rate limits
+    max_containers=2  # NVIDIA free tier has strict rate limits
 )
 def summarize_chunk(prompt: str):
     from .summarize import call_llm
