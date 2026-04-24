@@ -29,11 +29,22 @@ volume = modal.Volume.from_name(settings.VOLUME_NAME, create_if_missing=True)
     image=image,
     secrets=[modal.Secret.from_name("pdf-insight-secrets")],
     volumes={settings.VOLUME_PATH: volume},
+    timeout=600 # 10 mins per chunk
+)
+def summarize_chunk(prompt: str):
+    from .summarize import call_llm
+    from .config import settings
+    return call_llm(prompt, settings.LLM_PROVIDER.lower(), is_json=True)
+
+@app.function(
+    image=image,
+    secrets=[modal.Secret.from_name("pdf-insight-secrets")],
+    volumes={settings.VOLUME_PATH: volume},
     timeout=1800  # 30 mins
 )
 def process_pdf_job(job_id: str, filename: str):
     from .pdf_pipeline import process_pdf
-    process_pdf(job_id, filename, {}, volume=volume)
+    process_pdf(job_id, filename, {}, volume=volume, map_fn=summarize_chunk.map)
 
 @app.function(
     image=image,

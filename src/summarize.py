@@ -5,22 +5,17 @@ from .prompts import SYSTEM_PROMPT, MAP_PROMPT, REDUCE_PROMPT
 from openai import OpenAI
 from anthropic import Anthropic
 
-def generate_summary_and_insights(chunks: list, filename: str, params: dict, extraction: dict, progress_cb=None) -> dict:
+def prepare_map_prompts(chunks: list) -> list:
+    total = len(chunks)
+    prompts = []
+    for i, chunk in enumerate(chunks):
+        prompt = MAP_PROMPT.format(text=chunk, chunk_index=i+1, total_chunks=total)
+        prompts.append(prompt)
+    return prompts
+
+def synthesize_final_report(chunk_summaries: list, filename: str, params: dict, extraction: dict) -> dict:
     provider = settings.LLM_PROVIDER.lower()
     
-    # Map phase: summarize each chunk
-    chunk_summaries = []
-    total = len(chunks)
-    for i, chunk in enumerate(chunks):
-        if progress_cb:
-            progress_cb(f"summarizing: {i+1}/{total}")
-        prompt = MAP_PROMPT.format(text=chunk, chunk_index=i+1, total_chunks=total)
-        res = call_llm(prompt, provider, is_json=True)
-        chunk_summaries.append(res)
-        
-    if progress_cb:
-        progress_cb("summarizing: финальная сборка")
-        
     # Reduce phase: combine insights and write final markdown
     combined_summaries = json.dumps(chunk_summaries, ensure_ascii=False)
     reduce_prompt = REDUCE_PROMPT.format(
@@ -46,12 +41,27 @@ def generate_summary_and_insights(chunks: list, filename: str, params: dict, ext
         "sections": final_json.get("sections", []),
         "processing": {
             "used_ocr": extraction.get("used_ocr", False),
-            "chunk_count": len(chunks),
+            "chunk_count": len(chunk_summaries),
             "model": settings.LLM_MODEL,
             "provider": provider
         }
     }
     return output
+
+def generate_summary_and_insights(chunks: list, filename: str, params: dict, extraction: dict, progress_cb=None) -> dict:
+    # Legacy sequential version, or just a wrapper
+    prompts = prepare_map_prompts(chunks)
+    chunk_summaries = []
+    total = len(prompts)
+    for i, p in enumerate(prompts):
+        if progress_cb:
+            progress_cb(f"summarizing: {i+1}/{total}")
+        res = call_llm(p, settings.LLM_PROVIDER.lower(), is_json=True)
+        chunk_summaries.append(res)
+    
+    if progress_cb:
+        progress_cb("summarizing: финальная сборка")
+    return synthesize_final_report(chunk_summaries, filename, params, extraction)
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
 def call_llm(prompt: str, provider: str, is_json: bool = False) -> dict:

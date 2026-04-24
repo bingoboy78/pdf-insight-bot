@@ -1,11 +1,11 @@
 import traceback
 from .extract import extract_text_from_pdf
 from .chunking import chunk_text
-from .summarize import generate_summary_and_insights
+from .summarize import prepare_map_prompts, synthesize_final_report, generate_summary_and_insights
 from .storage import JobStorage
 from .config import settings
 
-def process_pdf(job_id: str, filename: str, params: dict, volume=None):
+def process_pdf(job_id: str, filename: str, params: dict, volume=None, map_fn=None):
     """Orchestrates the PDF processing and insight extraction workflow."""
     storage = JobStorage(settings.JOBS_DIR, volume=volume)
     storage.update_status(job_id, "extracting")
@@ -22,15 +22,24 @@ def process_pdf(job_id: str, filename: str, params: dict, volume=None):
         # 2. Chunking Phase
         chunks = chunk_text(extraction_result["text"])
         
-        storage.update_status(job_id, "summarizing")
-        
         # 3. LLM Insights & Synthesis Phase
-        def update_progress(msg):
-            storage.update_status(job_id, msg)
+        if map_fn:
+            storage.update_status(job_id, f"summarizing: parallel (0/{len(chunks)})")
+            prompts = prepare_map_prompts(chunks)
             
-        final_result = generate_summary_and_insights(
-            chunks, filename, params, extraction_result, progress_cb=update_progress
-        )
+            # Map prompts across Modal workers
+            # order_outputs=True ensures we get them back in the correct order
+            chunk_summaries = list(map_fn(prompts, order_outputs=True))
+            
+            storage.update_status(job_id, "summarizing: финальная сборка")
+            final_result = synthesize_final_report(chunk_summaries, filename, params, extraction_result)
+        else:
+            def update_progress(msg):
+                storage.update_status(job_id, msg)
+                
+            final_result = generate_summary_and_insights(
+                chunks, filename, params, extraction_result, progress_cb=update_progress
+            )
         
         # 4. Save Final Artifacts
         storage.save_json(job_id, final_result)
