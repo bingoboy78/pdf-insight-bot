@@ -24,12 +24,19 @@ def process_pdf(job_id: str, filename: str, params: dict, volume=None, map_fn=No
         
         # 3. LLM Insights & Synthesis Phase
         if map_fn:
-            storage.update_status(job_id, f"summarizing: parallel (0/{len(chunks)})")
+            total_chunks = len(chunks)
+            storage.update_status(job_id, f"summarizing: parallel (0/{total_chunks})")
             prompts = prepare_map_prompts(chunks)
             
             # Map prompts across Modal workers
-            # order_outputs=True ensures we get them back in the correct order
-            chunk_summaries = list(map_fn(prompts, order_outputs=True))
+            # We iterate through the results to update progress as they finish
+            chunk_summaries = [None] * total_chunks
+            
+            # Use map with return_exceptions=True so one failure doesn't kill the whole job immediately
+            # Actually, let's keep it simple for now and just iterate
+            for i, res in enumerate(map_fn(prompts, order_outputs=True)):
+                chunk_summaries[i] = res
+                storage.update_status(job_id, f"summarizing: parallel ({i+1}/{total_chunks})")
             
             storage.update_status(job_id, "summarizing: финальная сборка")
             final_result = synthesize_final_report(chunk_summaries, filename, params, extraction_result)
