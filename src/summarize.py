@@ -167,6 +167,22 @@ def _call_llm_once(prompt: str, provider: str, is_json: bool) -> str:
             ]
         )
         return response.content[0].text
+
+    elif provider == "google":
+        client = OpenAI(
+            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+            api_key=settings.LLM_API_KEY,
+            timeout=120.0
+        )
+        response = client.chat.completions.create(
+            model=settings.LLM_MODEL or "gemini-2.5-flash",
+            messages=[
+                {"role": "system", "content": system_msg},
+                {"role": "user", "content": prompt}
+            ]
+        )
+        return response.choices[0].message.content
+
     else:
         raise ValueError(f"Unsupported provider: {provider}")
 
