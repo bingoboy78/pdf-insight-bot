@@ -34,7 +34,11 @@ volume = modal.Volume.from_name(settings.VOLUME_NAME, create_if_missing=True)
 def summarize_chunk(prompt: str):
     from .summarize import call_llm
     from .config import settings
-    return call_llm(prompt, settings.LLM_PROVIDER.lower(), is_json=True)
+    try:
+        return {"success": True, "data": call_llm(prompt, settings.LLM_PROVIDER.lower(), is_json=True)}
+    except Exception as e:
+        import traceback
+        return {"success": False, "error": str(e), "traceback": traceback.format_exc()}
 
 @app.function(
     image=image,

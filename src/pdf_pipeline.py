@@ -30,12 +30,13 @@ def process_pdf(job_id: str, filename: str, params: dict, volume=None, map_fn=No
             
             # Map prompts across Modal workers
             # We iterate through the results to update progress as they finish
-            chunk_summaries = [None] * total_chunks
+            chunk_summaries = []
             
-            # Use map with return_exceptions=True so one failure doesn't kill the whole job immediately
-            # Actually, let's keep it simple for now and just iterate
             for i, res in enumerate(map_fn(prompts, order_outputs=True)):
-                chunk_summaries[i] = res
+                if not res["success"]:
+                    raise Exception(f"Ошибка в части {i+1}: {res['error']}")
+                
+                chunk_summaries.append(res["data"])
                 storage.update_status(job_id, f"summarizing: parallel ({i+1}/{total_chunks})")
             
             storage.update_status(job_id, "summarizing: финальная сборка")
