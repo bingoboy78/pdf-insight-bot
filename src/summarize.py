@@ -63,14 +63,23 @@ def generate_summary_and_insights(chunks: list, filename: str, params: dict, ext
         progress_cb("summarizing: финальная сборка")
     return synthesize_final_report(chunk_summaries, filename, params, extraction)
 
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+def _log_retry(retry_state):
+    exc = retry_state.outcome.exception()
+    print(f"[call_llm] Attempt {retry_state.attempt_number} failed: {type(exc).__name__}: {exc}")
+
+@retry(
+    stop=stop_after_attempt(5), 
+    wait=wait_exponential(multiplier=2, min=4, max=30),
+    before_sleep=_log_retry,
+    reraise=True
+)
 def call_llm(prompt: str, provider: str, is_json: bool = False) -> dict:
     system_msg = SYSTEM_PROMPT
     if is_json:
         system_msg += "\n\nYou MUST return valid JSON. Do NOT wrap it in markdown codeblocks like ```json."
         
     if provider == "openai":
-        client = OpenAI(api_key=settings.LLM_API_KEY, timeout=60.0)
+        client = OpenAI(api_key=settings.LLM_API_KEY, timeout=120.0)
         response = client.chat.completions.create(
             model=settings.LLM_MODEL or "gpt-4o",
             messages=[
@@ -85,7 +94,7 @@ def call_llm(prompt: str, provider: str, is_json: bool = False) -> dict:
         client = OpenAI(
             base_url="https://openrouter.ai/api/v1",
             api_key=settings.LLM_API_KEY,
-            timeout=60.0
+            timeout=120.0
         )
         response = client.chat.completions.create(
             model=settings.LLM_MODEL or "google/gemini-2.0-flash-lite-preview-02-05:free",
@@ -100,7 +109,7 @@ def call_llm(prompt: str, provider: str, is_json: bool = False) -> dict:
         client = OpenAI(
             base_url="https://integrate.api.nvidia.com/v1",
             api_key=settings.LLM_API_KEY,
-            timeout=60.0
+            timeout=120.0
         )
         response = client.chat.completions.create(
             model=settings.LLM_MODEL or "meta/llama-3.1-70b-instruct",

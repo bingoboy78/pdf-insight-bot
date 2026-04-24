@@ -29,7 +29,8 @@ volume = modal.Volume.from_name(settings.VOLUME_NAME, create_if_missing=True)
     image=image,
     secrets=[modal.Secret.from_name("pdf-insight-secrets")],
     volumes={settings.VOLUME_PATH: volume},
-    timeout=600 # 10 mins per chunk
+    timeout=600, # 10 mins per chunk
+    max_containers=5  # Limit parallel calls to avoid API rate limits
 )
 def summarize_chunk(prompt: str):
     from .summarize import call_llm
@@ -38,7 +39,18 @@ def summarize_chunk(prompt: str):
         return {"success": True, "data": call_llm(prompt, settings.LLM_PROVIDER.lower(), is_json=True)}
     except Exception as e:
         import traceback
-        return {"success": False, "error": str(e), "traceback": traceback.format_exc()}
+        tb = traceback.format_exc()
+        # Extract the real cause from RetryError
+        real_error = str(e)
+        if hasattr(e, '__cause__') and e.__cause__:
+            real_error = f"{type(e.__cause__).__name__}: {e.__cause__}"
+        elif hasattr(e, 'last_attempt'):
+            try:
+                real_error = str(e.last_attempt.exception())
+            except:
+                pass
+        print(f"[summarize_chunk] FAILED: {real_error}\n{tb}")
+        return {"success": False, "error": real_error, "traceback": tb}
 
 @app.function(
     image=image,
