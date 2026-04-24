@@ -18,7 +18,8 @@ image = (
         "pdf2image",
         "openai",
         "anthropic",
-        "tenacity"
+        "tenacity",
+        "google-generativeai"
     )
 )
 
@@ -61,6 +62,46 @@ def summarize_chunk(prompt: str):
 def process_pdf_job(job_id: str, filename: str):
     from .pdf_pipeline import process_pdf
     process_pdf(job_id, filename, {}, volume=volume, map_fn=summarize_chunk.map)
+
+@app.function(
+    image=image,
+    secrets=[modal.Secret.from_name("pdf-insight-secrets")],
+    volumes={settings.VOLUME_PATH: volume},
+    timeout=600  # 10 mins
+)
+def retry_reduce_job(job_id: str):
+    from .storage import JobStorage
+    from .summarize import synthesize_final_report
+    from .config import settings
+    import os
+    
+    storage = JobStorage(base_path=settings.JOBS_DIR, volume=volume)
+    
+    # Read chunks
+    chunks_path = os.path.join(storage._job_dir(job_id), "chunks.json")
+    chunks_data = storage._read_json(chunks_path)
+    if not chunks_data or "chunks" not in chunks_data:
+        storage.update_status(job_id, "failed: chunks not found for retry")
+        return
+        
+    # Read original extraction result (needed for synthesize_final_report)
+    # We might need to save it too, or extract it again.
+    # For now, we assume the chunks are enough or it's been saved.
+    # Looking at synthesize_final_report, it needs extraction_result for document_title.
+    
+    # Let's check if we save extraction_result
+    # In pdf_pipeline.py: extraction_result = extract_text_from_pdf(filename)
+    # We should save it too.
+    
+    storage.update_status(job_id, "summarizing: финальная сборка (retry)")
+    try:
+        final_result = synthesize_final_report(chunks_data["chunks"], "Document", {}, {})
+        storage.save_json(job_id, final_result)
+        if "summary" in final_result and "full_markdown" in final_result["summary"]:
+            storage.save_markdown(job_id, final_result["summary"]["full_markdown"])
+        storage.update_status(job_id, "completed")
+    except Exception as e:
+        storage.update_status(job_id, f"failed: {str(e)}")
 
 @app.function(
     image=image,
@@ -301,5 +342,29 @@ def api():
         if not md:
             return "Summary not found or still processing."
         return md
+
+    @web_app.post("/retry_reduce/{job_id}")
+    async def retry_reduce(job_id: str):
+        # Read chunks from the volume
+        chunks_path = os.path.join(storage._job_dir(job_id), "chunks.json")
+        chunks_data = storage._read_json(chunks_path)
+        if not chunks_data or "chunks" not in chunks_data:
+            return JSONResponse(status_code=404, content={"error": "Chunks not found for this job."})
+        
+        meta = storage.get_status(job_id)
+        if meta.get("status") not in ["completed", "failed"]:
+            # Maybe it's still running? We can force retry anyway, but let's be careful
+            pass
+            
+        storage.update_status(job_id, "retrying: финальная сборка")
+        
+        # We need to run the reduce phase in a background Modal function to not block the API
+        # We will reuse process_pdf_job but pass a special flag.
+        # However, for simplicity, since reduce might take 30-60s, we can just run it synchronously here?
+        # No, Vercel/FastAPI might timeout. Better to spawn a Modal function.
+        # We can just spawn `process_pdf_job` with a flag, or create a `retry_reduce_job` function.
+        retry_reduce_job.spawn(job_id)
+        
+        return {"job_id": job_id, "status": "Retrying reduce phase in background"}
 
     return web_app

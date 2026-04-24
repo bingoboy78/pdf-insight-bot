@@ -1,4 +1,5 @@
 import traceback
+import os
 from .extract import extract_text_from_pdf
 from .chunking import chunk_text
 from .summarize import prepare_map_prompts, synthesize_final_report, generate_summary_and_insights
@@ -39,6 +40,12 @@ def process_pdf(job_id: str, filename: str, params: dict, volume=None, map_fn=No
                 chunk_summaries.append(res["data"])
                 storage.update_status(job_id, f"summarizing: parallel ({i+1}/{total_chunks})")
             
+            # Save intermediate chunks in case synthesis fails
+            try:
+                storage._write_json(os.path.join(storage._job_dir(job_id), "chunks.json"), {"chunks": chunk_summaries})
+            except Exception as e:
+                print(f"Warning: Failed to save chunk summaries: {e}")
+                
             storage.update_status(job_id, "summarizing: финальная сборка")
             final_result = synthesize_final_report(chunk_summaries, filename, params, extraction_result)
         else:

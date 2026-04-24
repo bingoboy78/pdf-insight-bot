@@ -48,6 +48,8 @@ Output in JSON format exactly as follows:
   ]
 }}
 
+Output MUST be under 15,000 characters to avoid truncation. Be extremely dense and concise.
+
 Ensure "full_markdown" uses markdown headings (##) exactly as requested. It must be highly readable and dense with actual knowledge. Add emojis to headings as shown above.
 Constraints:
 - target_length_preference: {max_length}

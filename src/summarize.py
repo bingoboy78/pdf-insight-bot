@@ -79,11 +79,27 @@ def call_llm(prompt: str, provider: str, is_json: bool = False, max_retries: int
                 if content.endswith("```"):
                     content = content[:-3]
                 try:
-                    return json.loads(content.strip())
-                except json.JSONDecodeError:
-                    print(f"Failed to parse JSON. Raw output:\n{content}")
-                    return {"error": "JSON parse error", "raw": content}
+                    return json.loads(content.strip(), strict=False)
+                except json.JSONDecodeError as e:
+                    print(f"JSONDecodeError: {e}")
+                    print(f"Content length: {len(content)}")
+                    print(f"Raw content start: {content[:200]}")
+                    print(f"Raw content end: {content[-200:]}")
+                    
+                    # Try to fix truncated JSON if it's the last attempt or we want to be robust
+                    if attempt == max_retries:
+                        print("Attempting to fix truncated JSON...")
+                        fixed_content = fix_truncated_json(content)
+                        try:
+                            return json.loads(fixed_content, strict=False)
+                        except:
+                            print("Failed to fix JSON.")
+                    
+                    last_error = e
+                    # Continue to next attempt
+                    continue
             
+            # If not JSON, return as text
             return {"text": content}
             
         except RateLimitError as e:
@@ -105,6 +121,53 @@ def call_llm(prompt: str, provider: str, is_json: bool = False, max_retries: int
             time.sleep(wait_time)
     
     raise last_error
+
+
+def fix_truncated_json(json_str: str) -> str:
+    """Very basic attempt to fix a truncated JSON by closing open braces/brackets."""
+    json_str = json_str.strip()
+    if not json_str.startswith("{"):
+        return json_str
+        
+    stack = []
+    in_string = False
+    escaped = False
+    
+    clean_str = ""
+    for char in json_str:
+        if escaped:
+            clean_str += char
+            escaped = False
+            continue
+        if char == '\\':
+            clean_str += char
+            escaped = True
+            continue
+        if char == '"':
+            in_string = not in_string
+            clean_str += char
+            continue
+            
+        if not in_string:
+            if char == '{':
+                stack.append('}')
+            elif char == '[':
+                stack.append(']')
+            elif char == '}':
+                if stack and stack[-1] == '}':
+                    stack.pop()
+            elif char == ']':
+                if stack and stack[-1] == ']':
+                    stack.pop()
+        clean_str += char
+
+    if in_string:
+        clean_str += '"'
+        
+    while stack:
+        clean_str += stack.pop()
+        
+    return clean_str
 
 
 def _call_llm_once(prompt: str, provider: str, is_json: bool) -> str:
@@ -169,19 +232,45 @@ def _call_llm_once(prompt: str, provider: str, is_json: bool) -> str:
         return response.content[0].text
 
     elif provider == "google":
-        client = OpenAI(
-            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
-            api_key=settings.LLM_API_KEY,
-            timeout=120.0
-        )
-        response = client.chat.completions.create(
-            model=settings.LLM_MODEL or "gemini-2.5-flash",
-            messages=[
-                {"role": "system", "content": system_msg},
-                {"role": "user", "content": prompt}
-            ]
-        )
-        return response.choices[0].message.content
+        import google.generativeai as genai
+        
+        genai.configure(api_key=settings.LLM_API_KEY)
+        
+        generation_config = {
+            "max_output_tokens": 8192,
+            "temperature": 0.7,
+            "response_mime_type": "application/json" if is_json else "text/plain"
+        }
+        
+        try:
+            model_name = settings.LLM_MODEL
+            if not model_name or model_name == "gpt-4o":
+                # gemini-2.5-pro is better for the complex synthesis task
+                model_name = "gemini-2.5-pro" 
+                
+            model = genai.GenerativeModel(
+                model_name=model_name,
+                system_instruction=system_msg
+            )
+            response = model.generate_content(
+                prompt,
+                generation_config=generation_config
+            )
+            content = response.text
+            finish_reason = ""
+            if response.candidates and hasattr(response.candidates[0], "finish_reason"):
+                finish_reason = response.candidates[0].finish_reason.name if hasattr(response.candidates[0].finish_reason, "name") else str(response.candidates[0].finish_reason)
+                if finish_reason not in ["STOP", "1"]:
+                    print(f"WARNING: Gemini finish_reason is '{finish_reason}'. Output might be truncated!")
+            
+            if not content:
+                print("WARNING: Gemini returned empty content!")
+            return content or ""
+        except Exception as e:
+            # Safely handle potential encoding issues in the error message for logging
+            error_msg = str(e).encode('ascii', 'replace').decode('ascii')
+            print(f"Google GenAI Error: {error_msg}")
+            raise
 
     else:
         raise ValueError(f"Unsupported provider: {provider}")
